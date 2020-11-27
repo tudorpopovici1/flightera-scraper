@@ -5,8 +5,7 @@ import json
 
 from bs4 import BeautifulSoup
 
-# from .excel import write_to_excel
-
+import random
 import xlrd
 import xlsxwriter
 
@@ -100,6 +99,10 @@ def convert_date(date):
         'Nov': 11,
         'Dec': 12
     }
+    for comp in components:
+        if not comp:
+            print('REMOVING!!!!')
+            components.remove(comp)
     print(components)
     return f"{components[0]}-{months[components[1]]}-{components[2]}"
 
@@ -111,11 +114,16 @@ if __name__ == '__main__':
         json.dump([], f)
 
     lookup_flights = get_lookup_flights()
-
     print(lookup_flights)
+
+    # [
+    #     {'from': 'PDX', 'flight': 'AS2348', 'to': 'SFO', 'ACType': '73H', 'deltaArrDay': 0, 'seats': 175, 'freight': 8.69999980926514}#,
+    #    # {'flight': 'AS2507', 'from': 'BOI', 'to': 'PDX', 'ACType': 'DH4', 'deltaArrDay': 0, 'seats': 76, 'freight': 2.09999990463257}
+    # ]
 
     for lookup_flight in lookup_flights:
         flights = []
+        ind = 0
         print(f'At flight {lookup_flight}')
         for month in months:
             print(f'At month {month}')
@@ -157,21 +165,40 @@ if __name__ == '__main__':
                     'arrival_time': arrival_time.getText().replace("\n", "")[0:5]
                 })
 
-            time.sleep(30)
+            if ind % 2 == 0:
+                time.sleep(random.randint(45,60))
+            else:
+                time.sleep(random.randint(30,45))
+            ind += 1
 
         data = flights
-        for flight in data:
-            # Remove extra flights
-            if flight['origin_airport'] != lookup_flight['from'] or flight['destination_airport'] != lookup_flight['to']:
-                data.remove(flight)
+        new_data = []
 
+        # with open('flights.json') as f:
+        #     data = json.load(f)
+
+        for flight in data:
+            print(f'flight is {flight}')
+            print(f'lookup flight is {lookup_flight}')
+            # Remove extra flights
+            if flight['origin_airport'] == lookup_flight['from'] and flight['destination_airport'] == lookup_flight['to']:
+                new_data.append(flight)
+            else:
+                print(f'HERE!!!!!!!!!!!!!')
+                print(flight['origin_airport'])
+                print(flight['destination_airport'])
+
+        data = new_data
         scheduled_times = {}
         for flight in data:
             dict_key = f'{flight["departure_time"]}-{flight["arrival_time"]}'
-            if dict_key in scheduled_times:
-                scheduled_times[dict_key].append(flight['date'])
-            else:
+            if dict_key not in scheduled_times:
                 scheduled_times[dict_key] = []
+
+            # splitstr = flight['date'][0:10].split("-")
+            # date = f'{splitstr[2]}-{splitstr[1]}-{splitstr[0]}'
+            # flight['date'] = datetime.datetime.strptime(date, '%d-%m-%Y')
+            scheduled_times[dict_key].append(flight['date'])
 
         new_result = {}
         for interval, dates in scheduled_times.items():
@@ -179,49 +206,72 @@ if __name__ == '__main__':
             if len(dates) >= 2:
                 print(interval)
                 print(dates)
+                dates.sort()
 
-                # Determine daysOfWeek
-                days_of_week = []
-                for date in dates:
-                    if type(date) == str:
-                        splitstr = date[0:10].split("-")
-                        date = f'{splitstr[2]}-{splitstr[1]}-{splitstr[0]}'
-                        date = datetime.datetime.strptime(date, '%d-%m-%Y')
-                    days_of_week.append(date.weekday() + 1)
-                days_of_week.sort()
-                set_days_of_week = set(days_of_week)
-                str_days_of_week = ''
-                for el in set_days_of_week:
-                    str_days_of_week += str(el)
+                cutoffs = [0]
+                for index, d in enumerate(dates):
+                    # print(type(d))
+                    if index != 0 and (d - last_date).days > 7:
+                        cutoffs.append(index)
+                    last_date = d
 
-                new_result[interval] = {
-                    'fromDate': dates[0],
-                    'toDate': dates[len(dates) - 1],
-                    'daysOfWeek': str_days_of_week,
-                    'total': len(dates)
-                }
+                new_dates = []
+                for index, cutoff in enumerate(cutoffs):
+                    if index == len(cutoffs) - 1:
+                        new_dates.append(dates[cutoff:len(dates)])
+                    else:
+                        new_dates.append(dates[cutoff: cutoffs[index+1]])
+
+                print(f'new dates are {new_dates}')
+
+                for dates in new_dates:
+                    # Determine daysOfWeek
+                    days_of_week = []
+                    for date in dates:
+                        if type(date) == str:
+                            splitstr = date[0:10].split("-")
+                            date = f'{splitstr[2]}-{splitstr[1]}-{splitstr[0]}'
+                            date = datetime.datetime.strptime(date, '%d-%m-%Y')
+                        days_of_week.append(date.weekday() + 1)
+
+                    print(days_of_week)
+                    days_of_week.sort()
+                    set_days_of_week = set(days_of_week)
+                    str_days_of_week = ''
+                    for el in set_days_of_week:
+                        str_days_of_week += str(el)
+
+                    if interval not in new_result:
+                        new_result[interval] = []
+
+                    new_result[interval].append({
+                        'fromDate': dates[0],
+                        'toDate': dates[len(dates) - 1],
+                        'daysOfWeek': str_days_of_week,
+                        'total': len(dates)
+                    })
 
         new_results = []
-
         for interval, dates in new_result.items():
             splitstr = interval.split("-")
             splitstrdep = splitstr[0].split(":")
             splitstrarr = splitstr[1].split(":")
 
-            new_results.append({
-                'deptime': f'{splitstrdep[0]}{splitstrdep[1]}',
-                'arrtime': f'{splitstrarr[0]}{splitstrarr[1]}',
-                'fromDate': str(dates['fromDate']),
-                'toDate': str(dates['toDate']),
-                'daysOfWeek': dates['daysOfWeek'],
-                'from': lookup_flight['from'],
-                'to': lookup_flight['to'],
-                'flight': lookup_flight['flight'],
-                'freight': lookup_flight['freight'],
-                'seats': lookup_flight['seats'],
-                'deltaArrDay': lookup_flight['deltaArrDay'],
-                'ACType': lookup_flight['ACType']
-            })
+            for d in dates:
+                new_results.append({
+                    'deptime': f'{splitstrdep[0]}{splitstrdep[1]}',
+                    'arrtime': f'{splitstrarr[0]}{splitstrarr[1]}',
+                    'fromDate': str(d['fromDate']),
+                    'toDate': str(d['toDate']),
+                    'daysOfWeek': d['daysOfWeek'],
+                    'from': lookup_flight['from'],
+                    'to': lookup_flight['to'],
+                    'flight': lookup_flight['flight'],
+                    'freight': lookup_flight['freight'],
+                    'seats': lookup_flight['seats'],
+                    'deltaArrDay': lookup_flight['deltaArrDay'],
+                    'ACType': lookup_flight['ACType']
+                })
 
         print('new results are: ')
         print(new_results)
@@ -233,3 +283,6 @@ if __name__ == '__main__':
 
         with open('flights_result_processing.json', 'w') as f:
             json.dump(data, f)
+
+        with open('flights.txt', 'a') as f:
+            f.write(f"{lookup_flight['flight']}, {lookup_flight['from']}, {lookup_flight['to']}\n")
